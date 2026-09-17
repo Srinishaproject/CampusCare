@@ -7,10 +7,18 @@ import psycopg
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("FLASK_SECRET_KEY", secrets.token_hex(32))
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+if os.getenv("VERCEL") == "1" or os.getenv("SESSION_COOKIE_SECURE", "").lower() in ("1", "true"):
+    app.config["SESSION_COOKIE_SECURE"] = True
+
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://campuscare:campuscare@localhost:5432/campuscare")
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "").strip().lower()
 GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_ID", ""), os.getenv("GOOGLE_CLIENT_SECRET", "")
-GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:5000/api/auth/google/callback")
+GOOGLE_REDIRECT_URI = os.getenv("GOOGLE_REDIRECT_URI", "")
 SMTP_HOST, SMTP_PORT = os.getenv("SMTP_HOST", "smtp.gmail.com"), int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER, SMTP_PASSWORD = os.getenv("SMTP_USER", ""), os.getenv("SMTP_PASSWORD", "").replace(" ", "")
 
@@ -64,19 +72,21 @@ def logout():session.clear();return jsonify(message="Signed out")
 @app.get("/api/auth/google")
 def google_login():
     if not(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET):return jsonify(error="Google sign-in has not been configured."),503
+    redirect_uri = GOOGLE_REDIRECT_URI or f"{request.scheme}://{request.host}/api/auth/google/callback"
     state=secrets.token_urlsafe(24);session["oauth_state"]=state
-    return redirect("https://accounts.google.com/o/oauth2/v2/auth?"+urlencode({"client_id":GOOGLE_CLIENT_ID,"redirect_uri":GOOGLE_REDIRECT_URI,"response_type":"code","scope":"openid email profile","state":state,"prompt":"select_account"}))
+    return redirect("https://accounts.google.com/o/oauth2/v2/auth?"+urlencode({"client_id":GOOGLE_CLIENT_ID,"redirect_uri":redirect_uri,"response_type":"code","scope":"openid email profile","state":state,"prompt":"select_account"}))
 @app.get("/api/auth/google/callback")
 def google_callback():
-    if request.args.get("state")!=session.pop("oauth_state",None):return redirect("http://localhost:8080/#login-error")
+    redirect_uri = GOOGLE_REDIRECT_URI or f"{request.scheme}://{request.host}/api/auth/google/callback"
+    if request.args.get("state")!=session.pop("oauth_state",None):return redirect("/#login-error")
     try:
-        token=requests.post("https://oauth2.googleapis.com/token",data={"code":request.args["code"],"client_id":GOOGLE_CLIENT_ID,"client_secret":GOOGLE_CLIENT_SECRET,"redirect_uri":GOOGLE_REDIRECT_URI,"grant_type":"authorization_code"},timeout=10).json()
+        token=requests.post("https://oauth2.googleapis.com/token",data={"code":request.args["code"],"client_id":GOOGLE_CLIENT_ID,"client_secret":GOOGLE_CLIENT_SECRET,"redirect_uri":redirect_uri,"grant_type":"authorization_code"},timeout=10).json()
         profile=requests.get("https://openidconnect.googleapis.com/v1/userinfo",headers={"Authorization":f"Bearer {token['access_token']}"},timeout=10).json();email_address,google_id,name=profile["email"].lower(),profile["sub"],profile.get("name","")
-    except Exception:return redirect("http://localhost:8080/#login-error")
+    except Exception:return redirect("/#login-error")
     with db() as conn:
         with conn.cursor() as cur:cur.execute("INSERT INTO users(email,name,google_id) VALUES(%s,%s,%s) ON CONFLICT(email) DO UPDATE SET name=EXCLUDED.name,google_id=EXCLUDED.google_id RETURNING id,email,name",(email_address,name,google_id));row=cur.fetchone()
         conn.commit()
-    session["user_id"]=row[0];return redirect("http://localhost:8080/#dashboard")
+    session["user_id"]=row[0];return redirect("/#dashboard")
 @app.get("/api/issues")
 def get_issues():
     user,error=required()
