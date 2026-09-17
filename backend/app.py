@@ -49,6 +49,16 @@ def payload(row): return {"id":row[0],"title":row[1],"description":row[2],"categ
 
 @app.get("/api/health")
 def health(): return jsonify(status="healthy",application="CampusCare")
+@app.route("/api/index")
+@app.route("/api/index.py")
+def debug_vercel():
+    return jsonify({
+        "path_info": request.environ.get("PATH_INFO"),
+        "request_uri": request.environ.get("REQUEST_URI"),
+        "x_forwarded_uri": request.headers.get("X-Forwarded-Uri"),
+        "x_matched_path": request.headers.get("X-Matched-Path"),
+        "headers": {k: v for k, v in request.headers.items() if "cookie" not in k.lower() and "auth" not in k.lower()}
+    })
 @app.get("/api/auth/status")
 def auth_status(): return jsonify(user=current_user())
 @app.post("/api/auth/register")
