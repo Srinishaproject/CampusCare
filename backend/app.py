@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, session, redirect
+from flask import Flask, jsonify, request, session, redirect, send_from_directory
 from werkzeug.security import generate_password_hash, check_password_hash
 import os, secrets, smtplib, requests
 from email.message import EmailMessage
@@ -134,4 +134,34 @@ def delete_issue(issue_id):
             cur.execute("DELETE FROM issues WHERE id=%s",(issue_id,))
         conn.commit()
     return jsonify(message="Issue deleted")
+
+# Static frontend fallback handler (useful for Vercel serverless executions)
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "public")
+if not os.path.exists(FRONTEND_DIR):
+    FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend")
+
+@app.route("/")
+def serve_root():
+    return send_from_directory(FRONTEND_DIR, "index.html")
+
+@app.route("/<path:path>")
+def serve_fallback_static(path):
+    if os.path.exists(os.path.join(FRONTEND_DIR, path)):
+        return send_from_directory(FRONTEND_DIR, path)
+    return jsonify(error="Not Found", path=path), 404
+
+class ApiPrefixMiddleware:
+    def __init__(self, wsgi_app):
+        self.wsgi_app = wsgi_app
+    def __call__(self, environ, start_response):
+        path = environ.get('PATH_INFO', '')
+        if path and not path.startswith('/api'):
+            for prefix in ('/auth', '/issues', '/health'):
+                if path.startswith(prefix):
+                    environ['PATH_INFO'] = '/api' + path
+                    break
+        return self.wsgi_app(environ, start_response)
+
+app.wsgi_app = ApiPrefixMiddleware(app.wsgi_app)
+
 if __name__=="__main__":init_db();app.run(host="0.0.0.0",port=5000)
