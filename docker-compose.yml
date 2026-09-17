@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: campuscare-db
+    environment:
+      POSTGRES_DB: campuscare
+      POSTGRES_USER: campuscare
+      POSTGRES_PASSWORD: campuscare
+    volumes: [campuscare_db_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U campuscare -d campuscare"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  backend:
+    build: ./backend
+    container_name: campuscare-backend
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://campuscare:campuscare@db:5432/campuscare
+    depends_on:
+      db: {condition: service_healthy}
+    ports: ["5000:5000"]
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: campuscare-frontend
+    volumes:
+      - ./frontend:/usr/share/nginx/html
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on: [backend]
+    ports: ["8080:80"]
+volumes:
+  campuscare_db_data:
